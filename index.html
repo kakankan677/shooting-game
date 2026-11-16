@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#04050c">
+<title>STG Proto</title>
+<style>
+:root{--bg:#04050c;--ink:#e8ecff;--dim:#7d86b8;--line:#2a3170;--accent:#ff4f9a;--cyan:#5ff2ff;--gold:#ffe36b}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;overscroll-behavior:none}
+body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif}
+#app{position:fixed;inset:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+#field{position:absolute;image-rendering:pixelated;image-rendering:crisp-edges;background:#000;display:block}
+.probe{position:fixed;left:0;width:0;pointer-events:none;visibility:hidden}
+#probeTop{top:0;height:env(safe-area-inset-top,0px)}
+#probeBottom{bottom:0;height:env(safe-area-inset-bottom,0px)}
+#thumb{position:absolute;left:0;right:0;display:flex;align-items:center;justify-content:center;pointer-events:none;padding:12px 16px;box-sizing:border-box}
+#thumb .pad{width:100%;max-width:360px;height:100%;max-height:200px;border:2px dashed #1c2246;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--dim);font-size:12px;text-align:center}
+#thumb .pad b{color:#4a5390;font-size:11px;letter-spacing:.2em}
+#pauseBtn{position:absolute;width:32px;height:32px;border:2px solid var(--line);background:rgba(4,5,12,.6);color:var(--dim);font:700 12px/1 ui-monospace,Menlo,monospace;padding:0;touch-action:manipulation}
+.overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,5,12,.55);padding:16px;box-sizing:border-box;overflow:auto;touch-action:pan-y}
+[hidden]{display:none !important}
+.panel{width:min(360px,100%);background:rgba(8,10,26,.94);border:2px solid var(--line);box-shadow:4px 4px 0 #000;padding:18px 16px;box-sizing:border-box;margin:auto}
+.logo{margin:0 0 14px;font:900 30px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;color:var(--ink);text-shadow:3px 3px 0 var(--accent)}
+.logo small{display:block;margin-top:8px;font:500 11px/1.4 -apple-system,"Hiragino Sans",sans-serif;letter-spacing:.05em;color:var(--dim);text-shadow:none}
+.panel h2{margin:14px 0 6px;font-size:12px;font-weight:700;color:var(--dim);letter-spacing:.05em}
+.panel button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
+.primary{display:block;width:100%;padding:14px;background:var(--accent);border:0;box-shadow:0 4px 0 #8a1f50;color:#fff !important;font-weight:800 !important;font-size:18px !important;letter-spacing:.1em}
+.primary:active{transform:translateY(3px);box-shadow:0 1px 0 #8a1f50}
+.secondary{display:block;width:100%;margin-top:10px;padding:10px;background:transparent;border:2px solid var(--line);color:var(--dim) !important}
+.seg{display:flex;gap:6px}
+.seg button{flex:1;padding:9px 4px;background:#0d1030;border:2px solid var(--line);color:var(--dim);font-size:13px}
+.seg button[aria-pressed="true"]{border-color:var(--cyan);color:#fff;background:#12205a}
+.row{display:flex;gap:12px}.row>div{flex:1}
+.note{margin:6px 0 0;font-size:12px;color:var(--dim);line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="field" width="240" height="320"></canvas>
+  <div id="thumb"><div class="pad"><b>TOUCH PAD</b><span id="thumbHint"></span></div></div>
+  <button id="pauseBtn" aria-label="一時停止" hidden>II</button>
+</div>
+<div class="probe" id="probeTop"></div>
+<div class="probe" id="probeBottom"></div>
+
+<div id="menu" class="overlay">
+  <div class="panel">
+    <h1 class="logo">STG PROTO<small>仮題 ／ M1 手触りの試作</small></h1>
+    <button id="startBtn" class="primary">スタート</button>
+    <button id="titleBtn" class="secondary" hidden>はじめからやり直す</button>
+    <h2>レーザーの出し方（試したい操作を選ぶ）</h2>
+    <div class="seg" data-key="scheme">
+      <button data-v="shot">なし</button><button data-v="two">2本指</button><button data-v="still">指を止める</button>
+    </div>
+    <p class="note" id="schemeNote"></p>
+    <h2>指の感度</h2>
+    <div class="seg" data-key="sens">
+      <button data-v="1">1.0</button><button data-v="1.5">1.5</button><button data-v="2">2.0</button>
+    </div>
+    <div class="row">
+      <div><h2>音</h2><div class="seg" data-key="sound"><button data-v="true">ON</button><button data-v="false">OFF</button></div></div>
+      <div><h2>FPS 表示</h2><div class="seg" data-key="fps"><button data-v="true">ON</button><button data-v="false">OFF</button></div></div>
+    </div>
+    <p class="note">どこに指を置いてもよく、指を動かした分だけ自機が動く。触っている間はショットを撃ち続ける。<br>PC: 矢印キー / WASD で移動、Shift でレーザー、P で一時停止。</p>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+// ============================================================
+// 基本設定
+// ============================================================
+const W = 240, H = 320;          // 内部解像度（ドット絵の 1 ドット = 1 px）
+const STEP = 1000 / 60;          // ゲーム更新は 60Hz 固定
+const $ = (s) => document.querySelector(s);
+const cv = $('#field');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('sg.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('sg.' + k, JSON.stringify(v)); } catch (e) {} },
+};
+const params = new URLSearchParams(location.search);
+const settings = {
+  scheme: store.get('scheme', 'two'),
+  sens: store.get('sens', 1.5),
+  sound: store.get('sound', true),
+  fps: params.has('debug') ? true : store.get('fps', false),
+};
+let hiScore = store.get('hi', 0);
+const DBG = { invincible: params.has('inv'), auto: params.has('auto') };
+
+// ============================================================
+// ドット絵（文字列 + パレット → オフスクリーン canvas）
+// ============================================================
+function makeSprite(rows, pal) {
+  const h = rows.length, w = rows[0].length;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  for (let y = 0; y < h; y++) {
+    if (rows[y].length !== w) console.warn('sprite row width mismatch', y, rows[y]);
+    for (let x = 0; x < w; x++) {
+      const ch = rows[y][x];
+      if (ch === '.') continue;
+      g.fillStyle = pal[ch]; g.fillRect(x, y, 1, 1);
+    }
+  }
+  return c;
+}
+function tinted(src, color) {
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  g.drawImage(src, 0, 0); g.globalCompositeOperation = 'source-in';
+  g.fillStyle = color; g.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+
+const SPR = {};
+SPR.player = makeSprite([
+  '.......a.......',
+  '......aca......',
+  '......aca......',
+  '.....abcba.....',
+  '.....abcba.....',
+  '....abbcbba....',
+  '...abbbcbbba...',
+  '..abdbbcbbdba..',
+  '.abddbbbbbddba.',
+  'abdd.bbbbb.ddba',
+  'ad...bdddb...da',
+  '.....d...d.....',
+], { a: '#e8f4ff', b: '#3c6cff', c: '#5ff2ff', d: '#1b2a7a' });
+
+SPR.drone = makeSprite([
+  '..r.....r..',
+  '.rrr...rrr.',
+  'rRRrrrrrRRr',
+  'rRyRRRRRyRr',
+  '.rRRRkRRRr.',
+  '..rRkkkRr..',
+  '...rRRRr...',
+  '....rrr....',
+], { r: '#7a1f4a', R: '#e0466e', y: '#ffd23f', k: '#2a0a1a' });
+
+SPR.gun = makeSprite([
+  '...g.............g...',
+  '..ggg...........ggg..',
+  '.gGGg...........gGGg.',
+  '.gGGgggggggggggggGGg.',
+  'gGGGgGGGGGGGGGGGgGGGg',
+  'gGhGgGGGkkkkkGGGgGhGg',
+  'gGGGgGGkkoookkGGgGGGg',
+  'gGGGgGGkooOookGGgGGGg',
+  'gGGGgGGkkoookkGGgGGGg',
+  '.gGGgGGGkkkkkGGGgGGg.',
+  '..gggGGGGGGGGGGGggg..',
+  '....ggGGGGGGGGGgg....',
+  '.....ggGGGGGGGgg.....',
+  '......gggdddggg......',
+  '.......d.....d.......',
+], { g: '#2b4a3a', G: '#5f9a6e', h: '#c9f0a0', k: '#1a2420', o: '#ff7a2f', O: '#ffe36b', d: '#ff7a2f' });
+
+// 敵弾は画面でいちばん目立つ色にする（背景は暗く低コントラスト）
+SPR.bulletBig = makeSprite([
+  '..ppp..',
+  '.pPPPp.',
+  'pPWWWPp',
+  'pPWWWPp',
+  'pPWWWPp',
+  '.pPPPp.',
+  '..ppp..',
+], { p: '#ff2f7a', P: '#ff9ac4', W: '#ffffff' });
+SPR.bulletSmall = makeSprite([
+  '.ppp.',
+  'pPWPp',
+  'pWWWp',
+  'pPWPp',
+  '.ppp.',
+], { p: '#2f8fff', P: '#9ad0ff', W: '#ffffff' });
+SPR.shot = makeSprite([
+  '.W.',
+  'yWy',
+  'yWy',
+  'yWy',
+  '.y.',
+  '.y.',
+], { y: '#ffe36b', W: '#ffffff' });
+SPR.star = makeSprite([
+  '..y..',
+  '.yYy.',
+  'yYWYy',
+  '.yYy.',
+  '..y..',
+], { y: '#c98a1a', Y: '#ffe36b', W: '#ffffff' });
+
+const ETYPES = {
+  drone: { spr: SPR.drone, white: tinted(SPR.drone, '#ffffff'), hp: 3, r: 5, score: 100, big: false },
+  gun: { spr: SPR.gun, white: tinted(SPR.gun, '#ffffff'), hp: 140, r: 10, score: 3000, big: true },
+};
+const BKINDS = [
+  { spr: SPR.bulletBig, r: 2.0, half: 3 },   // 0: ピンクの大玉
+  { spr: SPR.bulletSmall, r: 1.3, half: 2 }, // 1: 青の小玉
+];
+
+// ドットの円（爆発の輪）。半径ごとにキャッシュする
+const circCache = new Map();
+function circleSprite(r, color, filled) {
+  r = Math.max(1, Math.round(r));
+  const key = r + color + (filled ? 'f' : 'o');
+  let c = circCache.get(key);
+  if (c) return c;
+  const s = r * 2 + 1;
+  c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d'); g.fillStyle = color;
+  for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) {
+    const d = Math.sqrt(x * x + y * y);
+    if (filled ? d <= r + 0.3 : (d <= r + 0.3 && d >= r - 1.2)) g.fillRect(x + r, y + r, 1, 1);
+  }
+  circCache.set(key, c);
+  return c;
+}
+const RAMP = ['#ffffff', '#fff3a0', '#ffc23f', '#ff7a2f', '#d8332a', '#5a1420'];
+for (let r = 1; r <= 36; r++) for (const c of RAMP.slice(0, 4)) circleSprite(r, c, false);
+for (let r = 10; r <= 24; r++) circleSprite(r, '#ffffff', true);
+
+// 3x5 のビットマップフォント
+const FONT = {
+  '0':'111101101101111','1':'010110010010111','2':'111001111100111','3':'111001111001111','4':'101101111001001',
+  '5':'111100111001111','6':'111100111101111','7':'111001010010010','8':'111101111101111','9':'111101111001111',
+  'A':'010101111101101','B':'110101110101110','C':'011100100100011','D':'110101101101110','E':'111100110100111',
+  'F':'111100110100100','G':'011100101101011','H':'101101111101101','I':'111010010010111','J':'001001001101010',
+  'K':'101101110101101','L':'100100100100111','M':'101111111101101','N':'110101101101101','O':'010101101101010',
+  'P':'110101110100100','Q':'010101101110011','R':'110101110101101','S':'011100010001110','T':'111010010010010',
+  'U':'101101101101111','V':'101101101101010','W':'101101111111101','X':'101101010101101','Y':'101101010010010',
+  'Z':'111001010100111',' ':'000000000000000',':':'000010000010000','.':'000000000000010','-':'000000111000000',
+  '!':'010010010000010','/':'001001010100100',
+};
+function drawText(s, x, y, color, scale = 1, align = 'left') {
+  s = String(s).toUpperCase();
+  const adv = 4 * scale, w = s.length * adv - scale;
+  if (align === 'center') x -= (w / 2) | 0; else if (align === 'right') x -= w;
+  ctx.fillStyle = color;
+  for (let i = 0; i < s.length; i++) {
+    const gph = FONT[s[i]]; if (!gph) continue;
+    for (let p = 0; p < 15; p++) if (gph[p] === '1') ctx.fillRect(x + i * adv + (p % 3) * scale, y + ((p / 3) | 0) * scale, scale, scale);
+  }
+}
+function drawTextS(s, x, y, color, scale = 1, align = 'left') {
+  drawText(s, x + scale, y + scale, '#000', scale, align);
+  drawText(s, x, y, color, scale, align);
+}
+const pad = (n, len) => String(Math.floor(n)).padStart(len, '0');
+
+// ============================================================
+// オブジェクトプール（弾や破片を作り直さず使い回す）
+// ============================================================
+class Pool {
+  constructor(size, make) { this.items = []; for (let i = 0; i < size; i++) this.items.push(make()); this.n = 0; }
+  spawn() { return this.n < this.items.length ? this.items[this.n++] : null; }
+  kill(i) { const last = --this.n; const t = this.items[i]; this.items[i] = this.items[last]; this.items[last] = t; }
+  clear() { this.n = 0; }
+}
+const bullets = new Pool(3000, () => ({ x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, k: 0 }));
+const shots = new Pool(200, () => ({ x: 0, y: 0, vx: 0, vy: 0 }));
+const parts = new Pool(1500, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, size: 1 }));
+const items = new Pool(3000, () => ({ x: 0, y: 0, vx: 0, vy: 0, t: 0 }));
+const enemies = [], queue = [], popups = [], rings = [], fx = [];
+
+// ============================================================
+// 音（WebAudio で合成。音声ファイルなし）
+// ============================================================
+const sfx = (() => {
+  let ac = null, master = null, noiseBuf = null, laserG = null;
+  function ensure() {
+    if (ac) return true;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try { ac = new AC(); } catch (e) { return false; }
+    master = ac.createGain(); master.gain.value = settings.sound ? 0.5 : 0; master.connect(ac.destination);
+    const len = ac.sampleRate;
+    noiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return true;
+  }
+  const ok = () => ac && ac.state === 'running' && settings.sound;
+  function tone(f0, f1, dur, type, vol) {
+    if (!ok()) return;
+    const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function noise(dur, vol, f0, f1) {
+    if (!ok()) return;
+    const t = ac.currentTime, s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = noiseBuf; f.type = 'lowpass';
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+  }
+  return {
+    unlock() { if (ensure() && ac.state === 'suspended') ac.resume(); },
+    laser(on) {
+      if (!ac) return;
+      if (!laserG) {
+        if (!on) return;
+        const o = ac.createOscillator(), o2 = ac.createOscillator(), f = ac.createBiquadFilter();
+        o.type = 'sawtooth'; o.frequency.value = 92; o2.type = 'square'; o2.frequency.value = 185.5;
+        f.type = 'lowpass'; f.frequency.value = 1400;
+        laserG = ac.createGain(); laserG.gain.value = 0;
+        o.connect(f); o2.connect(f); f.connect(laserG); laserG.connect(master); o.start(); o2.start();
+      }
+      laserG.gain.setTargetAtTime(on ? 0.07 : 0, ac.currentTime, 0.02);
+    },
+    shot() { tone(1400, 700, 0.035, 'square', 0.025); },
+    hit() { tone(520, 300, 0.03, 'square', 0.03); },
+    boom() { noise(0.22, 0.3, 2600, 180); },
+    bigBoom() { noise(0.9, 0.6, 1600, 60); tone(110, 30, 0.6, 'sawtooth', 0.25); },
+    star() { tone(2000, 3000, 0.04, 'triangle', 0.05); },
+    die() { noise(0.8, 0.5, 3000, 100); tone(600, 60, 0.7, 'square', 0.15); },
+    setOn(v) { if (master) master.gain.value = v ? 0.5 : 0; },
+    suspend() { if (ac && ac.state === 'running') ac.suspend(); },
+    resume() { if (ac && ac.state === 'suspended' && G.state === 'play') ac.resume(); },
+  };
+})();
+
+// ============================================================
+// ゲームの状態
+// ============================================================
+const G = { state: 'title', tick: 0, time: 0, score: 0, chain: 0, chainT: 0, chainMax: 0, misses: 0,
+  hitstop: 0, shake: 0, shakeMag: 0, loop: 0, dirT: 0, scriptIdx: 0, sndShot: 0, sndHit: 0, sndStar: 0 };
+const player = { x: W / 2, y: H - 40, alive: true, inv: 0, respawn: 0, fireCd: 0, volley: 0, laser: false, laserTop: 0, laserHit: false };
+const CHAIN_TIME = 90;
+
+function resetGame() {
+  Object.assign(G, { time: 0, score: 0, chain: 0, chainT: 0, chainMax: 0, misses: 0, hitstop: 0, shake: 0, loop: 0, dirT: 0, scriptIdx: 0 });
+  Object.assign(player, { x: W / 2, y: H - 40, alive: true, inv: 60, respawn: 0, fireCd: 0, laser: false });
+  bullets.clear(); shots.clear(); parts.clear(); items.clear();
+  enemies.length = queue.length = popups.length = rings.length = fx.length = 0;
+}
+function addScore(n) { G.score += n; if (G.score > hiScore) hiScore = G.score; }
+function saveHi() { store.set('hi', hiScore); }
+
+// ============================================================
+// 敵の出現タイムライン（M1 はループする試作用）
+// ============================================================
+function group(n, interval, fn) { for (let i = 0; i < n; i++) queue.push({ at: G.time + i * interval, fn: () => fn(i) }); }
+function spawnEnemy(type, o) {
+  const T = ETYPES[type];
+  enemies.push({ T, x: o.x, y: o.y, x0: o.x, y0: o.y, hp: T.hp, t: 0, flash: 0, dead: false,
+    move: o.move, dir: o.dir || 1, fire: o.fire || 0, fireAt: o.fireAt != null ? o.fireAt : 30 + ((Math.random() * 60) | 0) });
+}
+const SCRIPT = [
+  [40,  () => group(5, 14, (i) => spawnEnemy('drone', { x: 60, y: -8, move: 'line', dir: 1, fire: i % 2 ? 1 : 0 }))],
+  [160, () => group(5, 14, (i) => spawnEnemy('drone', { x: 180, y: -8, move: 'line', dir: -1, fire: i % 2 ? 0 : 1 }))],
+  [300, () => group(7, 10, () => spawnEnemy('drone', { x: -10, y: 40, move: 'arc', dir: 1, fire: 1 }))],
+  [420, () => group(7, 10, () => spawnEnemy('drone', { x: W + 10, y: 70, move: 'arc', dir: -1, fire: 1 }))],
+  [560, () => { for (let i = 0; i < 5; i++) spawnEnemy('drone', { x: 120 + (i - 2) * 26, y: -8 - Math.abs(i - 2) * 12, move: 'v', dir: i < 2 ? -1 : i > 2 ? 1 : (Math.random() < 0.5 ? -1 : 1), fire: 3, fireAt: 55 }); }],
+  [700, () => spawnEnemy('gun', { x: 120, y: -20, move: 'gun', dir: 1 })],
+  [780, () => group(6, 16, () => spawnEnemy('drone', { x: 30, y: -8, move: 'line', dir: 1 }))],
+  [920, () => group(6, 16, () => spawnEnemy('drone', { x: 210, y: -8, move: 'line', dir: -1 }))],
+  [1360, () => { group(6, 10, () => spawnEnemy('drone', { x: -10, y: 30, move: 'arc', dir: 1, fire: 1 })); group(6, 10, () => spawnEnemy('drone', { x: W + 10, y: 90, move: 'arc', dir: -1, fire: 1 })); }],
+  [1550, () => spawnEnemy('gun', { x: 60, y: -20, move: 'gun', dir: 1 })],
+  [1600, () => group(8, 12, (i) => spawnEnemy('drone', { x: 150 + (i % 2) * 50, y: -8, move: 'line', dir: i % 2 ? 1 : -1, fire: 1 }))],
+  [1950, () => { G.dirT = 0; G.scriptIdx = -1; G.loop++; }],
+];
+function director() {
+  G.dirT++;
+  while (G.scriptIdx < SCRIPT.length && SCRIPT[G.scriptIdx][0] <= G.dirT) { SCRIPT[G.scriptIdx][1](); G.scriptIdx++; }
+  for (let i = queue.length - 1; i >= 0; i--) if (queue[i].at <= G.time) { const q = queue[i]; queue.splice(i, 1); q.fn(); }
+}
+
+// ============================================================
+// 弾の撃ち方（M2 で弾幕エンジンに育てる）
+// ============================================================
+function spawnBullet(x, y, vx, vy, k) {
+  const b = bullets.spawn(); if (!b) return;
+  b.x = x; b.y = y; b.vx = vx; b.vy = vy; b.ax = 0; b.ay = 0; b.k = k;
+}
+const aimAt = (x, y) => Math.atan2(player.y - y, player.x - x);
+function shootFan(x, y, ang, n, spread, speed, k) {
+  for (let i = 0; i < n; i++) { const a = ang + (i - (n - 1) / 2) * spread; spawnBullet(x, y, Math.cos(a) * speed, Math.sin(a) * speed, k); }
+}
+function shootRing(x, y, n, offset, speed, k) {
+  for (let i = 0; i < n; i++) { const a = offset + (i * Math.PI * 2) / n; spawnBullet(x, y, Math.cos(a) * speed, Math.sin(a) * speed, k); }
+}
+
+const MOVES = {
+  line(e) { e.y += 1.0; e.x = e.x0 + Math.sin(e.t * 0.045) * 16 * e.dir; },
+  arc(e) { e.x += 1.5 * e.dir; e.y = e.y0 + Math.sin(e.t * 0.03) * 26 + e.t * 0.12; },
+  v(e) { if (e.t < 50) e.y += 1.8; else if (e.t > 80) { e.x += 2 * e.dir; e.y -= 0.9; } },
+  gun(e) {
+    const t = e.t;
+    if (t < 70) { const k = t / 70; e.y = -20 + 80 * (1 - (1 - k) * (1 - k)); }
+    else if (t < 610) { e.x = e.x0 + Math.sin((t - 70) * 0.012) * 50 * e.dir; e.y = 60 + Math.sin(t * 0.05) * 3; }
+    else e.y -= 0.8;
+  },
+};
+function enemyFire(e) {
+  if (!player.alive) return;
+  const sp = 0.15 * G.loop;
+  if (e.T === ETYPES.drone) {
+    if (e.fire && e.t === e.fireAt && e.y > 4 && e.y < H * 0.55) shootFan(e.x, e.y + 3, aimAt(e.x, e.y), e.fire, 0.22, 1.5 + sp, 0);
+    return;
+  }
+  const t = e.t;
+  if (t < 70 || t >= 610) return;
+  const u = t - 70;
+  if (u % 48 === 0) {
+    shootRing(e.x, e.y + 2, 18, u * 0.013, 1.05 + sp * 0.6, 1);
+    if (G.loop > 0) shootRing(e.x, e.y + 2, 18, u * 0.013 + Math.PI / 18, 0.8, 1);
+  }
+  if (u % 96 === 40) shootFan(e.x, e.y + 6, aimAt(e.x, e.y), 5, 0.2, 1.8 + sp, 0);
+  const w = u % 200;
+  if (w >= 120 && w < 180 && u % 6 === 0) {
+    const a = Math.PI / 2 + Math.sin(u * 0.05) * 0.9;
+    shootFan(e.x - 8, e.y + 6, a, 1, 0, 1.6, 1);
+    shootFan(e.x + 8, e.y + 6, Math.PI - a, 1, 0, 1.6, 1);
+  }
+}
+
+// ============================================================
+// 演出（爆発・輪・得点表示・ヒットストップ・揺れ）
+// ============================================================
+function spark(x, y, speed, life, size) {
+  const p = parts.spawn(); if (!p) return;
+  const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random() * 0.7);
+  p.x = x; p.y = y; p.vx = Math.cos(a) * s; p.vy = Math.sin(a) * s; p.life = 0; p.max = life * (0.6 + Math.random() * 0.4); p.size = size;
+}
+function explode(x, y, big) {
+  const n = big ? 60 : 14;
+  for (let i = 0; i < n; i++) spark(x, y, big ? 4 : 2.2, big ? 46 : 26, Math.random() < 0.35 ? 2 : 1);
+  rings.push({ x, y, r0: 2, r1: big ? 34 : 13, life: 0, max: big ? 22 : 12, filled: false });
+  if (big) rings.push({ x, y, r0: 22, r1: 16, life: 0, max: 4, filled: true });
+}
+function popup(x, y, text, color) { popups.push({ x, y, text, color, life: 0 }); }
+function cancelBullets(toItems) {
+  if (toItems) for (let i = 0; i < bullets.n; i++) {
+    const b = bullets.items[i], it = items.spawn(); if (!it) break;
+    it.x = b.x; it.y = b.y; it.vx = (Math.random() - 0.5) * 0.8; it.vy = -0.4 - Math.random() * 0.6; it.t = 0;
+  }
+  bullets.clear();
+}
+
+function damage(e, amt, hx, hy) {
+  if (e.dead) return;
+  e.hp -= amt; e.flash = 2;
+  if (Math.random() < 0.5) spark(hx, hy, 1.4, 10, 1);
+  if (G.time - G.sndHit > 4) { sfx.hit(); G.sndHit = G.time; }
+  if (e.hp <= 0) kill(e);
+}
+function kill(e) {
+  if (e.dead) return;
+  e.dead = true;
+  const T = e.T;
+  // リスクとリターン: 近くで倒すほど得点が上がる
+  const d = Math.hypot(player.x - e.x, player.y - e.y);
+  const pb = !player.alive ? 1 : d < 50 ? 4 : d < 100 ? 2 : 1;
+  G.chain++; G.chainT = CHAIN_TIME; if (G.chain > G.chainMax) G.chainMax = G.chain;
+  const pts = T.score * pb + G.chain * 10;
+  addScore(pts);
+  popup(e.x, e.y - 6, pts + (pb > 1 ? ' X' + pb : ''), pb === 4 ? '#ffe36b' : pb === 2 ? '#9ad0ff' : '#ffffff');
+  explode(e.x, e.y, T.big);
+  if (T.big) {
+    // 手応え: 大物はごく短く止めて揺らし、弾を得点アイテムに変える
+    G.hitstop = 5; G.shake = 16; G.shakeMag = 3;
+    cancelBullets(true);
+    sfx.bigBoom();
+    for (let k = 1; k <= 3; k++) fx.push({ at: G.time + k * 7, x: e.x + (Math.random() - 0.5) * 26, y: e.y + (Math.random() - 0.5) * 16 });
+  } else sfx.boom();
+}
+function playerDie() {
+  player.alive = false; player.respawn = 70; player.laser = false;
+  G.misses++; G.chain = 0; G.chainT = 0;
+  G.shake = 14; G.shakeMag = 3;
+  explode(player.x, player.y, true);
+  cancelBullets(false);
+  sfx.laser(false); sfx.die();
+}
+
+// ============================================================
+// 入力（指は「置いた位置からのずれ」で動かす）
+// ============================================================
+const input = { dx: 0, dy: 0, moveAccum: 0, still: 0, pointers: new Map(), mover: null, keys: new Set(), keyboard: false };
+let scale = 1;
+const app = $('#app');
+app.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;
+  sfx.unlock();
+  if (G.state !== 'play') return;
+  input.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (input.mover == null) { input.mover = e.pointerId; input.still = 0; }
+  input.keyboard = false;
+  try { app.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+});
+app.addEventListener('pointermove', (e) => {
+  const p = input.pointers.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (e.pointerId !== input.mover) return;
+  const k = settings.sens / scale;
+  input.dx += dx * k; input.dy += dy * k;
+  input.moveAccum += Math.abs(dx * k) + Math.abs(dy * k);
+});
+function pointerUp(e) {
+  if (!input.pointers.delete(e.pointerId)) return;
+  if (input.mover === e.pointerId) { const nx = input.pointers.keys().next(); input.mover = nx.done ? null : nx.value; input.still = 0; }
+}
+app.addEventListener('pointerup', pointerUp);
+app.addEventListener('pointercancel', pointerUp);
+function releaseAll() { input.pointers.clear(); input.mover = null; input.keys.clear(); input.dx = input.dy = 0; }
+document.addEventListener('touchmove', (e) => { if (!e.target.closest('.overlay')) e.preventDefault(); }, { passive: false });
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('dblclick', (e) => e.preventDefault());
+
+addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
+  if (k === 'p' || k === 'escape') { togglePause(); return; }
+  if (k === 'enter' && G.state !== 'play') { startOrResume(); return; }
+  input.keys.add(k); input.keyboard = true; sfx.unlock();
+});
+addEventListener('keyup', (e) => input.keys.delete(e.key.toLowerCase()));
+addEventListener('blur', () => input.keys.clear());
+
+// ============================================================
+// 更新
+// ============================================================
+const SPREAD = [[-6, -0.16], [-3, -0.07], [0, 0], [3, 0.07], [6, 0.16]];
+function autopilot() {
+  let ax = 0, ay = 0;
+  for (let i = 0; i < bullets.n; i++) {
+    const b = bullets.items[i], dx = player.x - b.x, dy = player.y - b.y, d2 = dx * dx + dy * dy;
+    if (d2 < 1600) { const w = 1 / (d2 + 4); ax += dx * w * 40; ay += dy * w * 40; }
+  }
+  let tgt = null;
+  for (const e of enemies) if (!e.dead && e.y > 0 && (!tgt || e.y > tgt.y)) tgt = e;
+  if (tgt) ax += Math.max(-1, Math.min(1, (tgt.x - player.x) * 0.05));
+  ay += (250 - player.y) * 0.02;
+  const len = Math.hypot(ax, ay), m = 2.4;
+  if (len > m) { ax *= m / len; ay *= m / len; }
+  return [ax, ay];
+}
+function updatePlayer() {
+  const p = player, kb = input.keys;
+  let mx = input.dx, my = input.dy;
+  input.dx = input.dy = 0;
+  if (input.moveAccum > 0.35) input.still = 0; else input.still++;
+  input.moveAccum = 0;
+  if (!p.alive) {
+    if (--p.respawn <= 0) { p.alive = true; p.inv = 120; p.x = W / 2; p.y = H - 40; }
+    return;
+  }
+  if (p.inv > 0) p.inv--;
+  const touching = input.mover != null;
+  let laser = kb.has('shift') || kb.has('x');
+  if (!laser && touching) {
+    if (settings.scheme === 'two') laser = input.pointers.size >= 2;
+    else if (settings.scheme === 'still') laser = input.still >= 18;
+  }
+  if (DBG.auto) { [mx, my] = autopilot(); laser = false; }
+  const slow = laser ? 0.5 : 1;
+  let kx = (kb.has('arrowright') || kb.has('d') ? 1 : 0) - (kb.has('arrowleft') || kb.has('a') ? 1 : 0);
+  let ky = (kb.has('arrowdown') || kb.has('s') ? 1 : 0) - (kb.has('arrowup') || kb.has('w') ? 1 : 0);
+  if (kx && ky) { kx *= 0.7071; ky *= 0.7071; }
+  p.x = Math.max(6, Math.min(W - 6, p.x + mx * slow + kx * 2.4 * slow));
+  p.y = Math.max(8, Math.min(H - 8, p.y + my * slow + ky * 2.4 * slow));
+
+  const firing = touching || input.keyboard || DBG.auto;
+  const wasLaser = p.laser;
+  p.laser = laser && firing;
+  if (p.laser !== wasLaser) sfx.laser(p.laser);
+  if (p.laser) updateLaser();
+  else if (firing && --p.fireCd <= 0) {
+    p.fireCd = 4; p.volley++;
+    for (const [ox, a] of SPREAD) {
+      const s = shots.spawn(); if (!s) break;
+      s.x = p.x + ox; s.y = p.y - 6; s.vx = Math.sin(a) * 7; s.vy = -Math.cos(a) * 7;
+    }
+    if (p.volley % 2 === 0) sfx.shot();
+  }
+}
+function updateLaser() {
+  const p = player;
+  let target = null;
+  for (const e of enemies) {
+    if (e.dead || e.y > p.y - 4 || e.y < -8) continue;
+    if (Math.abs(e.x - p.x) < e.T.r + 3 && (!target || e.y > target.y)) target = e;
+  }
+  p.laserHit = !!target;
+  p.laserTop = target ? target.y + target.T.r * 0.5 : 0;
+  if (target) {
+    damage(target, 1.2, p.x + (Math.random() - 0.5) * 4, p.laserTop);
+    if ((G.time & 1) === 0) spark(p.x, p.laserTop, 1.8, 10, 1);
+  }
+}
+function updateShots() {
+  for (let i = shots.n - 1; i >= 0; i--) {
+    const s = shots.items[i];
+    s.x += s.vx; s.y += s.vy;
+    if (s.y < -10 || s.x < -10 || s.x > W + 10) { shots.kill(i); continue; }
+    for (const e of enemies) {
+      if (e.dead || e.y < -8) continue;
+      const r = e.T.r;
+      if (Math.abs(s.x - e.x) < r + 2 && Math.abs(s.y - e.y) < r + 4) { damage(e, 1, s.x, s.y); shots.kill(i); break; }
+    }
+  }
+}
+function updateEnemies() {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.dead) { enemies.splice(i, 1); continue; }
+    e.t++; if (e.flash > 0) e.flash--;
+    MOVES[e.move](e);
+    enemyFire(e);
+    if (e.t > 20 && (e.y > H + 24 || e.y < -40 || e.x < -40 || e.x > W + 40)) { enemies.splice(i, 1); continue; }
+    const p = player;
+    if (p.alive && p.inv <= 0 && !DBG.invincible && Math.abs(p.x - e.x) < e.T.r * 0.7 && Math.abs(p.y - e.y) < e.T.r * 0.7) playerDie();
+  }
+}
+function updateBullets() {
+  const p = player, hit = p.alive && p.inv <= 0 && !DBG.invincible;
+  for (let i = bullets.n - 1; i >= 0; i--) {
+    const b = bullets.items[i];
+    b.vx += b.ax; b.vy += b.ay; b.x += b.vx; b.y += b.vy;
+    if (b.x < -8 || b.x > W + 8 || b.y < -8 || b.y > H + 8) { bullets.kill(i); continue; }
+    if (hit) {
+      const dx = b.x - p.x, dy = b.y - p.y, rr = BKINDS[b.k].r + 1.5;
+      if (dx * dx + dy * dy < rr * rr) { playerDie(); return; }
+    }
+  }
+}
+function updateItems() {
+  const p = player;
+  for (let i = items.n - 1; i >= 0; i--) {
+    const it = items.items[i];
+    it.t++;
+    if (it.t > 18 && p.alive) {
+      const dx = p.x - it.x, dy = p.y - it.y, d = Math.hypot(dx, dy) || 1;
+      const sp = Math.min(8, 1 + (it.t - 18) * 0.25);
+      it.vx = (dx / d) * sp; it.vy = (dy / d) * sp;
+      if (d < 10) {
+        addScore(50); items.kill(i);
+        if (G.time - G.sndStar > 2) { sfx.star(); G.sndStar = G.time; }
+        continue;
+      }
+    } else { it.vx *= 0.95; it.vy = it.vy * 0.95 + 0.02; }
+    it.x += it.vx; it.y += it.vy;
+    if (it.y > H + 8) items.kill(i);
+  }
+}
+function updateFx() {
+  for (let i = parts.n - 1; i >= 0; i--) {
+    const q = parts.items[i];
+    q.x += q.vx; q.y += q.vy + 0.3; q.vx *= 0.93; q.vy *= 0.93;
+    if (++q.life >= q.max) parts.kill(i);
+  }
+  for (let i = rings.length - 1; i >= 0; i--) if (++rings[i].life >= rings[i].max) rings.splice(i, 1);
+  for (let i = popups.length - 1; i >= 0; i--) { popups[i].y -= 0.4; if (++popups[i].life >= 45) popups.splice(i, 1); }
+  for (let i = fx.length - 1; i >= 0; i--) if (fx[i].at <= G.time) { explode(fx[i].x, fx[i].y, false); sfx.boom(); fx.splice(i, 1); }
+}
+
+// 背景の星（3 層の多重スクロール）
+const stars = [];
+[[40, 0.25, '#1c2140'], [25, 0.6, '#3a4270'], [12, 1.3, '#7d86b8']].forEach(([n, sp, c]) => {
+  for (let i = 0; i < n; i++) stars.push({ x: Math.random() * W, y: Math.random() * H, sp, c });
+});
+function scrollStars() { for (const s of stars) { s.y += s.sp; if (s.y > H) { s.y -= H; s.x = Math.random() * W; } } }
+
+function tick() {
+  G.tick++;
+  if (G.state !== 'pause') scrollStars();
+  if (G.state !== 'play') return;
+  if (G.shake > 0) G.shake--;
+  if (G.hitstop > 0) { G.hitstop--; return; }
+  G.time++;
+  director();
+  updatePlayer();
+  updateShots();
+  updateEnemies();
+  updateBullets();
+  updateItems();
+  updateFx();
+  if (G.chainT > 0 && --G.chainT === 0) G.chain = 0;
+}
+
+// ============================================================
+// 描画
+// ============================================================
+let fps = 0, worstMs = 0;
+function render() {
+  const sx = G.shake > 0 ? Math.round((Math.random() * 2 - 1) * G.shakeMag) : 0;
+  const sy = G.shake > 0 ? Math.round((Math.random() * 2 - 1) * G.shakeMag) : 0;
+  ctx.setTransform(1, 0, 0, 1, sx, sy);
+  ctx.fillStyle = '#04050c'; ctx.fillRect(-4, -4, W + 8, H + 8);
+  for (const s of stars) { ctx.fillStyle = s.c; ctx.fillRect(s.x | 0, s.y | 0, 1, s.sp > 1 ? 2 : 1); }
+
+  if (G.state !== 'title') {
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const spr = e.flash > 0 ? e.T.white : e.T.spr;
+      ctx.drawImage(spr, Math.round(e.x - spr.width / 2), Math.round(e.y - spr.height / 2));
+    }
+    for (let i = 0; i < shots.n; i++) { const s = shots.items[i]; ctx.drawImage(SPR.shot, Math.round(s.x) - 1, Math.round(s.y) - 3); }
+    drawPlayer();
+    for (let i = 0; i < parts.n; i++) {
+      const q = parts.items[i];
+      ctx.fillStyle = RAMP[Math.min(RAMP.length - 1, ((q.life / q.max) * RAMP.length) | 0)];
+      ctx.fillRect(q.x | 0, q.y | 0, q.size, q.size);
+    }
+    for (const r of rings) {
+      const k = r.life / r.max, rad = r.r0 + (r.r1 - r.r0) * k;
+      const spr = circleSprite(rad, r.filled ? '#ffffff' : RAMP[Math.min(3, (k * 4) | 0)], r.filled);
+      ctx.drawImage(spr, Math.round(r.x - spr.width / 2), Math.round(r.y - spr.height / 2));
+    }
+    for (let i = 0; i < items.n; i++) { const it = items.items[i]; ctx.drawImage(SPR.star, Math.round(it.x) - 2, Math.round(it.y) - 2); }
+    for (let i = 0; i < bullets.n; i++) {
+      const b = bullets.items[i], K = BKINDS[b.k];
+      ctx.drawImage(K.spr, Math.round(b.x) - K.half, Math.round(b.y) - K.half);
+    }
+    for (const p of popups) if (p.life < 30 || (p.life & 2)) drawTextS(p.text, Math.round(p.x), Math.round(p.y), p.color, 1, 'center');
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawHud();
+}
+function drawPlayer() {
+  const p = player;
+  if (!p.alive || (p.inv > 0 && (G.tick >> 2) & 1)) return;
+  const x = Math.round(p.x), y = Math.round(p.y);
+  if (p.laser) {
+    const top = Math.round(p.laserTop), bot = y - 7, w = (G.tick & 1) ? 7 : 5;
+    ctx.fillStyle = '#1f6fff'; ctx.fillRect(x - (w >> 1), top, w, bot - top);
+    ctx.fillStyle = '#9ff0ff'; ctx.fillRect(x - 1, top, 3, bot - top);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(x, top, 1, bot - top);
+    const m = circleSprite(3 + (G.tick & 1), '#ffffff', true);
+    ctx.drawImage(m, x - m.width / 2 | 0, bot - m.height / 2 | 0);
+    if (p.laserHit) { const h = circleSprite(4 + (G.tick % 3), '#9ff0ff', false); ctx.drawImage(h, x - h.width / 2 | 0, top - h.height / 2 | 0); }
+  }
+  ctx.drawImage(SPR.player, x - 7, y - 5);
+  const f = (G.tick >> 1) & 1;
+  ctx.fillStyle = f ? '#ffe36b' : '#ff7a2f';
+  ctx.fillRect(x - 2, y + 7, 1, 2 + f); ctx.fillRect(x + 2, y + 7, 1, 2 + f);
+  // 当たり判定は見た目よりずっと小さい点。常に見せて理不尽さをなくす
+  ctx.fillStyle = '#ff4f9a'; ctx.fillRect(x - 1, y - 1, 3, 3);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, 1, 1);
+}
+function drawHud() {
+  if (G.state === 'title') return;
+  drawTextS('SCORE', 4, 4, '#7d86b8'); drawTextS(pad(G.score, 9), 28, 4, '#ffffff');
+  drawTextS('HI', 4, 11, '#7d86b8'); drawTextS(pad(hiScore, 9), 28, 11, '#ffe36b');
+  drawTextS('MISS ' + G.misses, W - 26, 4, '#7d86b8', 1, 'right');
+  if (G.chain >= 2) {
+    const c = G.chain >= 50 ? '#ff4f9a' : G.chain >= 20 ? '#ffe36b' : '#5ff2ff';
+    drawTextS(G.chain, 4, 22, c, 2);
+    drawTextS('CHAIN', 4, 34, c);
+    ctx.fillStyle = '#1c2140'; ctx.fillRect(4, 41, 30, 2);
+    ctx.fillStyle = c; ctx.fillRect(4, 41, Math.ceil((30 * G.chainT) / CHAIN_TIME), 2);
+  }
+  if (settings.fps) {
+    drawTextS('FPS ' + Math.round(fps) + ' MAX ' + Math.round(worstMs) + 'MS', 4, H - 14, '#7d86b8');
+    drawTextS('B ' + bullets.n + ' E ' + enemies.length + ' P ' + parts.n, 4, H - 7, '#7d86b8');
+  }
+  if (DBG.invincible || DBG.auto) drawTextS((DBG.invincible ? 'INV ' : '') + (DBG.auto ? 'AUTO' : ''), W - 4, H - 7, '#ff4f9a', 1, 'right');
+}
+
+// ============================================================
+// レイアウト（縦長画面では、上にゲーム画面・下に指を置く場所）
+// ============================================================
+function layout() {
+  const st = $('#probeTop').getBoundingClientRect().height, sb = $('#probeBottom').getBoundingClientRect().height;
+  const vw = innerWidth, vh = innerHeight;
+  scale = Math.min(vw / W, (vh - st - sb) / H);
+  const w = Math.floor(W * scale), h = Math.floor(H * scale);
+  const left = Math.round((vw - w) / 2), top = Math.round(st);
+  Object.assign(cv.style, { width: w + 'px', height: h + 'px', left: left + 'px', top: top + 'px' });
+  const th = $('#thumb'), thumbH = vh - sb - (top + h);
+  th.style.top = top + h + 'px'; th.style.bottom = sb + 'px';
+  th.style.display = thumbH > 70 ? 'flex' : 'none';
+  const pb = $('#pauseBtn');
+  pb.style.left = left + w - 36 + 'px'; pb.style.top = top + 4 + 'px';
+}
+addEventListener('resize', layout);
+addEventListener('orientationchange', () => setTimeout(layout, 200));
+
+// ============================================================
+// メニュー
+// ============================================================
+const SCHEME_NOTE = {
+  shot: 'レーザーなし。ショットだけで遊ぶ基準の操作。',
+  two: '1本目の指で動かし、もう1本の指を画面のどこかに置いている間レーザー（移動が遅くなる）。',
+  still: '指を置いたまま 0.3 秒ほど止めるとレーザー。動かすとショットに戻る。',
+};
+const SCHEME_HINT = {
+  shot: 'なぞって移動・触っている間ショット',
+  two: 'なぞって移動・2本目の指でレーザー',
+  still: 'なぞって移動・指を止めるとレーザー',
+};
+const parseV = (v) => { try { return JSON.parse(v); } catch (e) { return v; } };
+function syncMenu() {
+  document.querySelectorAll('.seg').forEach((seg) => {
+    const key = seg.dataset.key;
+    seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(String(parseV(b.dataset.v)) === String(settings[key]))));
+  });
+  $('#schemeNote').textContent = SCHEME_NOTE[settings.scheme] || '';
+  $('#thumbHint').textContent = SCHEME_HINT[settings.scheme] || '';
+}
+document.querySelectorAll('.seg').forEach((seg) => seg.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const key = seg.dataset.key, v = parseV(b.dataset.v);
+  settings[key] = v; store.set(key, v);
+  if (key === 'sound') { sfx.unlock(); sfx.setOn(v); }
+  syncMenu();
+}));
+function showMenu(mode) {
+  $('#menu').hidden = false;
+  $('#startBtn').textContent = mode === 'pause' ? '再開' : 'スタート';
+  $('#titleBtn').hidden = mode !== 'pause';
+  $('#pauseBtn').hidden = true;
+}
+function startOrResume() {
+  sfx.unlock();
+  if (G.state === 'title') resetGame();
+  releaseAll();
+  G.state = 'play';
+  $('#menu').hidden = true; $('#pauseBtn').hidden = false;
+}
+function togglePause() {
+  if (G.state === 'play') { G.state = 'pause'; player.laser = false; sfx.laser(false); saveHi(); releaseAll(); showMenu('pause'); }
+  else if (G.state === 'pause') startOrResume();
+}
+$('#startBtn').addEventListener('click', startOrResume);
+$('#titleBtn').addEventListener('click', () => { saveHi(); G.state = 'title'; startOrResume(); });
+$('#pauseBtn').addEventListener('click', togglePause);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (G.state === 'play') togglePause(); saveHi(); sfx.suspend(); }
+  else sfx.resume();
+});
+addEventListener('pagehide', saveHi);
+
+// ============================================================
+// ループ（更新 60Hz 固定、描画は画面のリフレッシュごと）
+// ============================================================
+let last = performance.now(), acc = 0, frames = 0, fpsT = last, worst = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = now - last; last = now;
+  if (dt > 250) dt = 250;
+  acc += dt; worst = Math.max(worst, dt);
+  let n = 0;
+  while (acc >= STEP && n < 5) { tick(); acc -= STEP; n++; }
+  if (n === 5) acc = 0;
+  render();
+  frames++;
+  if (now - fpsT >= 1000) { fps = (frames * 1000) / (now - fpsT); worstMs = worst; frames = 0; worst = 0; fpsT = now; }
+}
+
+// デバッグ用（コンソールから SG.dbg.auto = true など）
+window.SG = {
+  G, player, enemies, bullets, settings, dbg: DBG,
+  stress(n = 1000) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = 0.2 + Math.random() * 0.4;
+      spawnBullet(Math.random() * W, Math.random() * H * 0.7, Math.cos(a) * s, Math.sin(a) * s, i & 1);
+    }
+    return bullets.n;
+  },
+};
+
+syncMenu();
+layout();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
