@@ -49,9 +49,10 @@ body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Ka
 
 <div id="menu" class="overlay">
   <div class="panel">
-    <h1 class="logo">STG PROTO<small>仮題 ／ M1 手触りの試作</small></h1>
+    <h1 class="logo">STG PROTO<small>仮題 ／ M2 弾幕エンジンの試作</small></h1>
     <button id="startBtn" class="primary">スタート</button>
-    <button id="titleBtn" class="secondary" hidden>はじめからやり直す</button>
+    <button id="titleBtn" class="secondary" hidden>タイトルに戻る</button>
+    <button id="galleryBtn" class="secondary">弾幕ギャラリー（fps 計測・約 1 分半）</button>
     <h2>レーザーの出し方（試したい操作を選ぶ）</h2>
     <div class="seg" data-key="scheme">
       <button data-v="shot">なし</button><button data-v="two">2本指</button><button data-v="still">指を止める</button>
@@ -199,14 +200,19 @@ SPR.star = makeSprite([
   '..y..',
 ], { y: '#c98a1a', Y: '#ffe36b', W: '#ffffff' });
 
+SPR.bulletSmallPink = makeSprite([
+  '.ppp.',
+  'pPWPp',
+  'pWWWp',
+  'pPWPp',
+  '.ppp.',
+], { p: '#ff2f7a', P: '#ff9ac4', W: '#ffffff' });
+
 const ETYPES = {
   drone: { spr: SPR.drone, white: tinted(SPR.drone, '#ffffff'), hp: 3, r: 5, score: 100, big: false },
   gun: { spr: SPR.gun, white: tinted(SPR.gun, '#ffffff'), hp: 140, r: 10, score: 3000, big: true },
+  turret: { spr: SPR.gun, white: tinted(SPR.gun, '#ffffff'), hp: 1e9, r: 10, score: 0, big: false }, // ギャラリー用（倒れない）
 };
-const BKINDS = [
-  { spr: SPR.bulletBig, r: 2.0, half: 3 },   // 0: ピンクの大玉
-  { spr: SPR.bulletSmall, r: 1.3, half: 2 }, // 1: 青の小玉
-];
 
 // ドットの円（爆発の輪）。半径ごとにキャッシュする
 const circCache = new Map();
@@ -228,6 +234,44 @@ function circleSprite(r, color, filled) {
 const RAMP = ['#ffffff', '#fff3a0', '#ffc23f', '#ff7a2f', '#d8332a', '#5a1420'];
 for (let r = 1; r <= 36; r++) for (const c of RAMP.slice(0, 4)) circleSprite(r, c, false);
 for (let r = 10; r <= 24; r++) circleSprite(r, '#ffffff', true);
+
+// 向きのある針弾。32 方向ぶんを起動時に描いておく
+const TAU = Math.PI * 2;
+function needleSprites(outer, inner) {
+  const out = [];
+  for (let d = 0; d < 32; d++) {
+    const a = (d / 32) * TAU, ca = Math.cos(a), sa = Math.sin(a);
+    const c = document.createElement('canvas'); c.width = c.height = 11;
+    const g = c.getContext('2d');
+    const px = (t) => Math.round(5 + ca * t), py = (t) => Math.round(5 + sa * t);
+    const nx = Math.round(-sa), ny = Math.round(ca);
+    g.fillStyle = outer;
+    for (let t = -4; t <= 4; t += 0.5) {
+      g.fillRect(px(t), py(t), 1, 1);
+      if (Math.abs(t) <= 2.5) { g.fillRect(px(t) + nx, py(t) + ny, 1, 1); g.fillRect(px(t) - nx, py(t) - ny, 1, 1); }
+    }
+    g.fillStyle = inner;
+    for (let t = -2.5; t <= 2.5; t += 0.5) g.fillRect(px(t), py(t), 1, 1);
+    out.push(c);
+  }
+  return out;
+}
+function orbSprite(c1, c2) {
+  const c = document.createElement('canvas'); c.width = c.height = 11;
+  const g = c.getContext('2d');
+  g.drawImage(circleSprite(5, c1, true), 0, 0);
+  g.drawImage(circleSprite(4, c2, true), 1, 1);
+  g.drawImage(circleSprite(2, '#ffffff', true), 3, 3);
+  return c;
+}
+// 敵弾の種類。r は当たり判定の半径で、見た目より小さくしてある
+const BKINDS = [
+  { spr: SPR.bulletBig, r: 2.0, half: 3 },                     // 0: ピンクの大玉
+  { spr: SPR.bulletSmall, r: 1.3, half: 2 },                   // 1: 青の小玉
+  { spr: SPR.bulletSmallPink, r: 1.3, half: 2 },               // 2: ピンクの小玉
+  { dir: needleSprites('#2f8fff', '#ffffff'), r: 1.2, half: 5 }, // 3: 青の針弾（進む向きに回る）
+  { spr: orbSprite('#8a2fff', '#d09aff'), r: 3.5, half: 5 },   // 4: 紫の大玉
+];
 
 // 3x5 のビットマップフォント
 const FONT = {
@@ -266,7 +310,7 @@ class Pool {
   kill(i) { const last = --this.n; const t = this.items[i]; this.items[i] = this.items[last]; this.items[last] = t; }
   clear() { this.n = 0; }
 }
-const bullets = new Pool(3000, () => ({ x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, k: 0 }));
+const bullets = new Pool(3000, () => ({ x: 0, y: 0, vx: 0, vy: 0, a: 0, s: 0, acc: 0, sMin: 0, sMax: 8, w: 0, wait: 0, aim: false, s2: 0, aimOff: 0, t: 0, k: 0 }));
 const shots = new Pool(200, () => ({ x: 0, y: 0, vx: 0, vy: 0 }));
 const parts = new Pool(1500, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, size: 1 }));
 const items = new Pool(3000, () => ({ x: 0, y: 0, vx: 0, vy: 0, t: 0 }));
@@ -334,13 +378,13 @@ const sfx = (() => {
 // ============================================================
 // ゲームの状態
 // ============================================================
-const G = { state: 'title', tick: 0, time: 0, score: 0, chain: 0, chainT: 0, chainMax: 0, misses: 0,
+const G = { state: 'title', mode: 'game', rank: 1, tick: 0, time: 0, score: 0, chain: 0, chainT: 0, chainMax: 0, misses: 0,
   hitstop: 0, shake: 0, shakeMag: 0, loop: 0, dirT: 0, scriptIdx: 0, sndShot: 0, sndHit: 0, sndStar: 0 };
 const player = { x: W / 2, y: H - 40, alive: true, inv: 0, respawn: 0, fireCd: 0, volley: 0, laser: false, laserTop: 0, laserHit: false };
 const CHAIN_TIME = 90;
 
 function resetGame() {
-  Object.assign(G, { time: 0, score: 0, chain: 0, chainT: 0, chainMax: 0, misses: 0, hitstop: 0, shake: 0, loop: 0, dirT: 0, scriptIdx: 0 });
+  Object.assign(G, { rank: 1, time: 0, score: 0, chain: 0, chainT: 0, chainMax: 0, misses: 0, hitstop: 0, shake: 0, loop: 0, dirT: 0, scriptIdx: 0 });
   Object.assign(player, { x: W / 2, y: H - 40, alive: true, inv: 60, respawn: 0, fireCd: 0, laser: false });
   bullets.clear(); shots.clear(); parts.clear(); items.clear();
   enemies.length = queue.length = popups.length = rings.length = fx.length = 0;
@@ -354,8 +398,13 @@ function saveHi() { store.set('hi', hiScore); }
 function group(n, interval, fn) { for (let i = 0; i < n; i++) queue.push({ at: G.time + i * interval, fn: () => fn(i) }); }
 function spawnEnemy(type, o) {
   const T = ETYPES[type];
-  enemies.push({ T, x: o.x, y: o.y, x0: o.x, y0: o.y, hp: T.hp, t: 0, flash: 0, dead: false,
-    move: o.move, dir: o.dir || 1, fire: o.fire || 0, fireAt: o.fireAt != null ? o.fireAt : 30 + ((Math.random() * 60) | 0) });
+  const e = { T, x: o.x, y: o.y, x0: o.x, y0: o.y, hp: T.hp, t: 0, flash: 0, dead: false,
+    move: o.move, dir: o.dir || 1, fire: o.fire || 0, fireAt: o.fireAt != null ? o.fireAt : 30 + ((Math.random() * 60) | 0),
+    gen: null, wait: 0 };
+  const script = o.script || SCRIPTS[type];
+  if (script) e.gen = script(e);
+  enemies.push(e);
+  return e;
 }
 const SCRIPT = [
   [40,  () => group(5, 14, (i) => spawnEnemy('drone', { x: 60, y: -8, move: 'line', dir: 1, fire: i % 2 ? 1 : 0 }))],
@@ -369,7 +418,7 @@ const SCRIPT = [
   [1360, () => { group(6, 10, () => spawnEnemy('drone', { x: -10, y: 30, move: 'arc', dir: 1, fire: 1 })); group(6, 10, () => spawnEnemy('drone', { x: W + 10, y: 90, move: 'arc', dir: -1, fire: 1 })); }],
   [1550, () => spawnEnemy('gun', { x: 60, y: -20, move: 'gun', dir: 1 })],
   [1600, () => group(8, 12, (i) => spawnEnemy('drone', { x: 150 + (i % 2) * 50, y: -8, move: 'line', dir: i % 2 ? 1 : -1, fire: 1 }))],
-  [1950, () => { G.dirT = 0; G.scriptIdx = -1; G.loop++; }],
+  [1950, () => { G.dirT = 0; G.scriptIdx = -1; G.loop++; G.rank = 1 + 0.1 * G.loop; }],
 ];
 function director() {
   G.dirT++;
@@ -378,21 +427,114 @@ function director() {
 }
 
 // ============================================================
-// 弾の撃ち方（M2 で弾幕エンジンに育てる）
+// 弾幕エンジン
+//  弾は「角度 a・速さ s」で持つ。1 発ごとに次の性質を付けられる（o で指定、省略時は既定値）
+//    k     弾の種類（BKINDS の番号）       s     速さ（px/tick）
+//    acc   毎 tick の加速（マイナスで減速）  sMin / sMax  速さの下限・上限
+//    w     毎 tick 曲がる角度（rad）         wait  n tick 目に「狙い直し」をする（0 で無効）
+//    aim   wait のときに自機を狙い直すか     s2    wait 後の速さ     aimOff  狙い直す角度のずれ
+//  敵の攻撃はジェネレーター関数で書き、`yield n` で n tick 待つ。
 // ============================================================
-function spawnBullet(x, y, vx, vy, k) {
-  const b = bullets.spawn(); if (!b) return;
-  b.x = x; b.y = y; b.vx = vx; b.vy = vy; b.ax = 0; b.ay = 0; b.k = k;
+const BDEF = {};
+function fire(x, y, a, o = BDEF) {
+  if (!player.alive) return null;      // やられた直後は撃たない（復活時の理不尽をなくす）
+  const b = bullets.spawn(); if (!b) return null;
+  const r = G.rank;
+  b.x = x; b.y = y; b.a = a; b.t = 0;
+  b.k = o.k || 0; b.s = (o.s != null ? o.s : 1.5) * r;
+  b.acc = (o.acc || 0) * r; b.sMin = (o.sMin || 0) * r; b.sMax = (o.sMax != null ? o.sMax : 8) * r;
+  b.w = o.w || 0; b.wait = o.wait || 0; b.aim = !!o.aim; b.s2 = (o.s2 || 0) * r; b.aimOff = o.aimOff || 0;
+  b.vx = Math.cos(a) * b.s; b.vy = Math.sin(a) * b.s;
+  return b;
 }
-const aimAt = (x, y) => Math.atan2(player.y - y, player.x - x);
-function shootFan(x, y, ang, n, spread, speed, k) {
-  for (let i = 0; i < n; i++) { const a = ang + (i - (n - 1) / 2) * spread; spawnBullet(x, y, Math.cos(a) * speed, Math.sin(a) * speed, k); }
-}
-function shootRing(x, y, n, offset, speed, k) {
-  for (let i = 0; i < n; i++) { const a = offset + (i * Math.PI * 2) / n; spawnBullet(x, y, Math.cos(a) * speed, Math.sin(a) * speed, k); }
+const D = {
+  // (x, y) から自機への角度
+  aim: (x, y, off = 0) => Math.atan2(player.y - y, player.x - x) + off,
+  // 扇状に n 発（中心角 a、隣との間隔 spread）
+  fan(x, y, a, n, spread, o) { for (let i = 0; i < n; i++) fire(x, y, a + (i - (n - 1) / 2) * spread, o); },
+  // 全方位に n 発（最初の角度 off）
+  ring(x, y, n, off, o) { for (let i = 0; i < n; i++) fire(x, y, off + (i * TAU) / n, o); },
+  // 同じ向きに速さ違いを n 発重ねる（列弾）
+  line(x, y, a, n, s0, s1, o = BDEF) {
+    const tmp = Object.assign({}, o);
+    for (let i = 0; i < n; i++) { tmp.s = s0 + ((s1 - s0) * i) / Math.max(1, n - 1); fire(x, y, a, tmp); }
+  },
+};
+// ジェネレーターを 1 tick 進める
+function runScript(e) {
+  if (!e.gen) return;
+  if (e.wait > 0) { e.wait--; return; }
+  const r = e.gen.next();
+  if (r.done) { e.gen = null; return; }
+  e.wait = Math.max(0, (r.value | 0) - 1);
 }
 
+// 敵ごとの攻撃
+const SCRIPTS = {
+  *drone(e) {
+    yield e.fireAt;
+    if (e.fire && e.y > 4 && e.y < H * 0.55) D.fan(e.x, e.y + 3, D.aim(e.x, e.y), e.fire, 0.22, { k: 0, s: 1.5 });
+  },
+  *gun(e) {
+    yield 70;
+    for (let u = 0; u < 540; u++) {
+      if (u % 48 === 0) {
+        D.ring(e.x, e.y + 2, 18, u * 0.013, { k: 1, s: 1.05 });
+        if (G.loop > 0) D.ring(e.x, e.y + 2, 18, u * 0.013 + Math.PI / 18, { k: 1, s: 0.8 });
+      }
+      if (u % 96 === 40) D.fan(e.x, e.y + 6, D.aim(e.x, e.y), 5, 0.2, { k: 0, s: 1.8 });
+      const w = u % 200;
+      if (w >= 120 && w < 180 && u % 6 === 0) {
+        const a = Math.PI / 2 + Math.sin(u * 0.05) * 0.9;
+        fire(e.x - 8, e.y + 6, a, { k: 1, s: 1.6 });
+        fire(e.x + 8, e.y + 6, Math.PI - a, { k: 1, s: 1.6 });
+      }
+      yield 1;
+    }
+  },
+};
+
+// 弾幕ギャラリー: 撃ち方の見本と、iPhone での fps 計測を兼ねる
+// [名前, 攻撃, 長さ(tick)]
+const GALLERY = [
+  ['AIM FAN', function* (e) {
+    for (;;) { D.fan(e.x, e.y, D.aim(e.x, e.y), 7, 0.16, { k: 0, s: 2 }); yield 12; D.fan(e.x, e.y, D.aim(e.x, e.y), 6, 0.16, { k: 0, s: 2 }); yield 40; }
+  }],
+  ['RING', function* (e) { for (let i = 0; ; i++) { D.ring(e.x, e.y, 24, i * 0.13, { k: 1, s: 1.3 }); yield 20; } }],
+  ['SPIRAL', function* (e) { for (let i = 0; ; i++) { D.ring(e.x, e.y, 4, i * 0.21, { k: 2, s: 1.6 }); yield 3; } }],
+  ['TWIN SPIRAL', function* (e) {
+    for (let i = 0; ; i++) { D.ring(e.x, e.y, 5, i * 0.17, { k: 1, s: 1.4 }); D.ring(e.x, e.y, 5, -i * 0.17, { k: 2, s: 1.4 }); yield 4; }
+  }],
+  ['FLOWER', function* (e) {
+    for (let i = 0; ; i++) { D.ring(e.x, e.y, 16, i * 0.2, { k: 1, s: 1.6, w: 0.012 }); D.ring(e.x, e.y, 16, i * 0.2, { k: 2, s: 1.6, w: -0.012 }); yield 24; }
+  }],
+  ['ACCEL RING', function* (e) { for (let i = 0; ; i++) { D.ring(e.x, e.y, 32, i * 0.1, { k: 4, s: 0.2, acc: 0.03, sMax: 2.6 }); yield 36; } }],
+  ['STOP AND AIM', function* (e) {
+    for (let i = 0; ; i++) { D.ring(e.x, e.y, 20, i * 0.3, { k: 3, s: 2.4, acc: -0.06, wait: 45, aim: true, s2: 2.2 }); yield 50; }
+  }],
+  ['RAIN', function* () {
+    for (;;) { for (let j = 0; j < 3; j++) fire(8 + Math.random() * (W - 16), -4, Math.PI / 2 + (Math.random() - 0.5) * 0.2, { k: 2, s: 1 + Math.random() * 0.8 }); yield 2; }
+  }],
+  ['NEEDLE BURST', function* (e) {
+    for (;;) { const a = D.aim(e.x, e.y); for (let r = 0; r < 12; r++) { D.fan(e.x, e.y, a, 3, 0.35, { k: 3, s: 3.2 }); yield 3; } yield 50; }
+  }],
+  ['LINE WALL', function* (e) {
+    for (let i = 0; ; i++) { const a0 = Math.PI / 2 + (i % 2 ? 0.12 : 0); for (let j = -4; j <= 4; j++) D.line(e.x, e.y, a0 + j * 0.25, 5, 1.2, 2.4, { k: 0 }); yield 60; }
+  }],
+  ['BOSS MIX', function* (e) {
+    for (let i = 0; ; i++) {
+      if (i % 4 === 0) D.ring(e.x, e.y, 36, i * 0.05, { k: 1, s: 1.1 });
+      D.ring(e.x - 20, e.y, 3, i * 0.25, { k: 2, s: 1.7 });
+      D.ring(e.x + 20, e.y, 3, -i * 0.25, { k: 2, s: 1.7 });
+      if (i % 30 === 15) D.fan(e.x, e.y, D.aim(e.x, e.y), 9, 0.12, { k: 3, s: 2.8 });
+      yield 4;
+    }
+  }],
+  ['STRESS', function* (e) { for (let i = 0; ; i++) { D.ring(e.x, e.y, 40, i * 0.07, { k: i & 1, s: 0.45 }); yield 6; } }, 720],
+];
+
 const MOVES = {
+  hover(e) { e.y += (64 - e.y) * 0.08; },
   line(e) { e.y += 1.0; e.x = e.x0 + Math.sin(e.t * 0.045) * 16 * e.dir; },
   arc(e) { e.x += 1.5 * e.dir; e.y = e.y0 + Math.sin(e.t * 0.03) * 26 + e.t * 0.12; },
   v(e) { if (e.t < 50) e.y += 1.8; else if (e.t > 80) { e.x += 2 * e.dir; e.y -= 0.9; } },
@@ -403,28 +545,6 @@ const MOVES = {
     else e.y -= 0.8;
   },
 };
-function enemyFire(e) {
-  if (!player.alive) return;
-  const sp = 0.15 * G.loop;
-  if (e.T === ETYPES.drone) {
-    if (e.fire && e.t === e.fireAt && e.y > 4 && e.y < H * 0.55) shootFan(e.x, e.y + 3, aimAt(e.x, e.y), e.fire, 0.22, 1.5 + sp, 0);
-    return;
-  }
-  const t = e.t;
-  if (t < 70 || t >= 610) return;
-  const u = t - 70;
-  if (u % 48 === 0) {
-    shootRing(e.x, e.y + 2, 18, u * 0.013, 1.05 + sp * 0.6, 1);
-    if (G.loop > 0) shootRing(e.x, e.y + 2, 18, u * 0.013 + Math.PI / 18, 0.8, 1);
-  }
-  if (u % 96 === 40) shootFan(e.x, e.y + 6, aimAt(e.x, e.y), 5, 0.2, 1.8 + sp, 0);
-  const w = u % 200;
-  if (w >= 120 && w < 180 && u % 6 === 0) {
-    const a = Math.PI / 2 + Math.sin(u * 0.05) * 0.9;
-    shootFan(e.x - 8, e.y + 6, a, 1, 0, 1.6, 1);
-    shootFan(e.x + 8, e.y + 6, Math.PI - a, 1, 0, 1.6, 1);
-  }
-}
 
 // ============================================================
 // 演出（爆発・輪・得点表示・ヒットストップ・揺れ）
@@ -494,6 +614,7 @@ const app = $('#app');
 app.addEventListener('pointerdown', (e) => {
   if (e.target.closest('button')) return;
   sfx.unlock();
+  if (G.state === 'result') { toTitle(); return; }
   if (G.state !== 'play') return;
   input.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (input.mover == null) { input.mover = e.pointerId; input.still = 0; }
@@ -525,7 +646,8 @@ addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
   if (k === 'p' || k === 'escape') { togglePause(); return; }
-  if (k === 'enter' && G.state !== 'play') { startOrResume(); return; }
+  if (k === 'enter' && G.state === 'result') { toTitle(); return; }
+  if (k === 'enter' && G.state !== 'play') { startOrResume('game'); return; }
   input.keys.add(k); input.keyboard = true; sfx.unlock();
 });
 addEventListener('keyup', (e) => input.keys.delete(e.key.toLowerCase()));
@@ -620,17 +742,29 @@ function updateEnemies() {
     if (e.dead) { enemies.splice(i, 1); continue; }
     e.t++; if (e.flash > 0) e.flash--;
     MOVES[e.move](e);
-    enemyFire(e);
+    runScript(e);
     if (e.t > 20 && (e.y > H + 24 || e.y < -40 || e.x < -40 || e.x > W + 40)) { enemies.splice(i, 1); continue; }
     const p = player;
-    if (p.alive && p.inv <= 0 && !DBG.invincible && Math.abs(p.x - e.x) < e.T.r * 0.7 && Math.abs(p.y - e.y) < e.T.r * 0.7) playerDie();
+    if (p.alive && p.inv <= 0 && !invincibleNow() && Math.abs(p.x - e.x) < e.T.r * 0.7 && Math.abs(p.y - e.y) < e.T.r * 0.7) playerDie();
   }
 }
+const invincibleNow = () => DBG.invincible || G.mode === 'gallery';
 function updateBullets() {
-  const p = player, hit = p.alive && p.inv <= 0 && !DBG.invincible;
+  const p = player, hit = p.alive && p.inv <= 0 && !invincibleNow();
   for (let i = bullets.n - 1; i >= 0; i--) {
     const b = bullets.items[i];
-    b.vx += b.ax; b.vy += b.ay; b.x += b.vx; b.y += b.vy;
+    b.t++;
+    if (b.wait && b.t === b.wait) {
+      // 狙い直し: 向きを自機へ向け、速さを s2 に切り替える
+      if (b.aim) b.a = Math.atan2(p.y - b.y, p.x - b.x) + b.aimOff;
+      b.s = b.s2; b.acc = 0; b.w = 0;
+      b.vx = Math.cos(b.a) * b.s; b.vy = Math.sin(b.a) * b.s;
+    } else if (b.acc || b.w) {
+      if (b.acc) { b.s += b.acc; if (b.s < b.sMin) b.s = b.sMin; else if (b.s > b.sMax) b.s = b.sMax; }
+      b.a += b.w;
+      b.vx = Math.cos(b.a) * b.s; b.vy = Math.sin(b.a) * b.s;
+    }
+    b.x += b.vx; b.y += b.vy;
     if (b.x < -8 || b.x > W + 8 || b.y < -8 || b.y > H + 8) { bullets.kill(i); continue; }
     if (hit) {
       const dx = b.x - p.x, dy = b.y - p.y, rr = BKINDS[b.k].r + 1.5;
@@ -675,6 +809,30 @@ const stars = [];
 });
 function scrollStars() { for (const s of stars) { s.y += s.sp; if (s.y > H) { s.y -= H; s.x = Math.random() * W; } } }
 
+// 弾幕ギャラリーの進行と計測
+const gal = { i: -1, t: 0, results: [], cur: null, peak: 0 };
+function galleryStart() { gal.i = -1; gal.results = []; gal.peak = 0; galleryNext(); }
+function galleryNext() {
+  bullets.clear(); enemies.length = 0;
+  gal.i++; gal.t = 0;
+  if (gal.i >= GALLERY.length) {
+    G.state = 'result'; gal.cur = null;
+    player.laser = false; sfx.laser(false); releaseAll();
+    $('#pauseBtn').hidden = true;
+    return;
+  }
+  const [name, fn, dur] = GALLERY[gal.i];
+  gal.cur = { name, dur: dur || 420, minFps: Infinity, worst: 0, maxB: 0 };
+  gal.results.push(gal.cur);
+  const e = spawnEnemy('turret', { x: W / 2, y: -20, move: 'hover', script: fn });
+  e.wait = 40; // 降りてくるまで待つ
+}
+function galleryTick() {
+  gal.t++;
+  if (bullets.n > gal.cur.maxB) gal.cur.maxB = bullets.n;
+  if (gal.t >= gal.cur.dur) galleryNext();
+}
+
 function tick() {
   G.tick++;
   if (G.state !== 'pause') scrollStars();
@@ -682,7 +840,8 @@ function tick() {
   if (G.shake > 0) G.shake--;
   if (G.hitstop > 0) { G.hitstop--; return; }
   G.time++;
-  director();
+  if (G.mode === 'gallery') { galleryTick(); if (G.state !== 'play') return; }
+  else director();
   updatePlayer();
   updateShots();
   updateEnemies();
@@ -724,7 +883,8 @@ function render() {
     for (let i = 0; i < items.n; i++) { const it = items.items[i]; ctx.drawImage(SPR.star, Math.round(it.x) - 2, Math.round(it.y) - 2); }
     for (let i = 0; i < bullets.n; i++) {
       const b = bullets.items[i], K = BKINDS[b.k];
-      ctx.drawImage(K.spr, Math.round(b.x) - K.half, Math.round(b.y) - K.half);
+      const spr = K.dir ? K.dir[Math.round((b.a * 32) / TAU) & 31] : K.spr;
+      ctx.drawImage(spr, Math.round(b.x) - K.half, Math.round(b.y) - K.half);
     }
     for (const p of popups) if (p.life < 30 || (p.life & 2)) drawTextS(p.text, Math.round(p.x), Math.round(p.y), p.color, 1, 'center');
   }
@@ -752,8 +912,43 @@ function drawPlayer() {
   ctx.fillStyle = '#ff4f9a'; ctx.fillRect(x - 1, y - 1, 3, 3);
   ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y, 1, 1);
 }
+function drawResults() {
+  ctx.fillStyle = 'rgba(4,5,12,0.85)'; ctx.fillRect(0, 0, W, H);
+  drawTextS('GALLERY RESULT', W / 2, 14, '#ffe36b', 2, 'center');
+  const y0 = 38;
+  drawTextS('PATTERN', 8, y0, '#7d86b8');
+  drawTextS('MIN FPS', 150, y0, '#7d86b8', 1, 'right');
+  drawTextS('MAX MS', 190, y0, '#7d86b8', 1, 'right');
+  drawTextS('BULLETS', 232, y0, '#7d86b8', 1, 'right');
+  let lowest = Infinity;
+  gal.results.forEach((r, i) => {
+    const y = y0 + 10 + i * 9, measured = r.minFps !== Infinity, f = measured ? Math.round(r.minFps) : 0;
+    if (measured) lowest = Math.min(lowest, f);
+    const c = !measured ? '#7d86b8' : f >= 55 ? '#ffffff' : f >= 45 ? '#ffe36b' : '#ff4f9a';
+    drawTextS(r.name, 8, y, '#e8ecff');
+    drawTextS(measured ? f : '-', 150, y, c, 1, 'right');
+    drawTextS(measured ? Math.round(r.worst) : '-', 190, y, c, 1, 'right');
+    drawTextS(r.maxB, 232, y, '#9ad0ff', 1, 'right');
+  });
+  const yb = y0 + 16 + gal.results.length * 9;
+  drawTextS('PEAK FPS ' + Math.round(gal.peak) + '   LOWEST ' + (lowest === Infinity ? '-' : lowest), W / 2, yb, '#5ff2ff', 1, 'center');
+  drawTextS('SCREENSHOT THIS AND SEND IT!', W / 2, yb + 14, '#ff9ac4', 1, 'center');
+  if ((G.tick >> 5) & 1) drawTextS('TAP TO RETURN', W / 2, H - 20, '#ffffff', 1, 'center');
+}
 function drawHud() {
   if (G.state === 'title') return;
+  if (G.state === 'result') { drawResults(); return; }
+  if (G.mode === 'gallery') {
+    const r = gal.cur;
+    if (r) {
+      drawTextS((gal.i + 1) + '/' + GALLERY.length + ' ' + r.name, 4, 4, '#ffe36b');
+      ctx.fillStyle = '#1c2140'; ctx.fillRect(4, 11, 60, 2);
+      ctx.fillStyle = '#ffe36b'; ctx.fillRect(4, 11, Math.ceil((60 * gal.t) / r.dur), 2);
+    }
+    drawTextS('FPS ' + Math.round(fps) + ' MAX ' + Math.round(worstMs) + 'MS', 4, H - 14, '#5ff2ff');
+    drawTextS('BULLETS ' + bullets.n, 4, H - 7, '#5ff2ff');
+    return;
+  }
   drawTextS('SCORE', 4, 4, '#7d86b8'); drawTextS(pad(G.score, 9), 28, 4, '#ffffff');
   drawTextS('HI', 4, 11, '#7d86b8'); drawTextS(pad(hiScore, 9), 28, 11, '#ffe36b');
   drawTextS('MISS ' + G.misses, W - 26, 4, '#7d86b8', 1, 'right');
@@ -823,11 +1018,16 @@ function showMenu(mode) {
   $('#menu').hidden = false;
   $('#startBtn').textContent = mode === 'pause' ? '再開' : 'スタート';
   $('#titleBtn').hidden = mode !== 'pause';
+  $('#galleryBtn').hidden = mode === 'pause';
   $('#pauseBtn').hidden = true;
 }
-function startOrResume() {
+function startOrResume(mode) {
   sfx.unlock();
-  if (G.state === 'title') resetGame();
+  if (G.state === 'title') {
+    resetGame();
+    G.mode = mode === 'gallery' ? 'gallery' : 'game';
+    if (G.mode === 'gallery') galleryStart();
+  }
   releaseAll();
   G.state = 'play';
   $('#menu').hidden = true; $('#pauseBtn').hidden = false;
@@ -836,8 +1036,10 @@ function togglePause() {
   if (G.state === 'play') { G.state = 'pause'; player.laser = false; sfx.laser(false); saveHi(); releaseAll(); showMenu('pause'); }
   else if (G.state === 'pause') startOrResume();
 }
-$('#startBtn').addEventListener('click', startOrResume);
-$('#titleBtn').addEventListener('click', () => { saveHi(); G.state = 'title'; startOrResume(); });
+function toTitle() { saveHi(); G.state = 'title'; resetGame(); sfx.laser(false); showMenu('title'); }
+$('#startBtn').addEventListener('click', () => startOrResume('game'));
+$('#galleryBtn').addEventListener('click', () => startOrResume('gallery'));
+$('#titleBtn').addEventListener('click', toTitle);
 $('#pauseBtn').addEventListener('click', togglePause);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { if (G.state === 'play') togglePause(); saveHi(); sfx.suspend(); }
@@ -859,19 +1061,26 @@ function frame(now) {
   if (n === 5) acc = 0;
   render();
   frames++;
-  if (now - fpsT >= 1000) { fps = (frames * 1000) / (now - fpsT); worstMs = worst; frames = 0; worst = 0; fpsT = now; }
+  if (now - fpsT >= 1000) {
+    fps = (frames * 1000) / (now - fpsT); worstMs = worst; frames = 0; worst = 0; fpsT = now;
+    // ギャラリー中は 1 秒ごとの値を、いま流れているパターンの記録に入れる（最初の 1 秒は入れ替わりなので除く）
+    if (G.mode === 'gallery' && G.state === 'play' && gal.cur && gal.t > 60) {
+      gal.cur.minFps = Math.min(gal.cur.minFps, fps);
+      gal.cur.worst = Math.max(gal.cur.worst, worstMs);
+      gal.peak = Math.max(gal.peak, fps);
+    }
+  }
 }
 
 // デバッグ用（コンソールから SG.dbg.auto = true など）
 window.SG = {
-  G, player, enemies, bullets, settings, dbg: DBG,
+  G, player, enemies, bullets, settings, dbg: DBG, gal, GALLERY, D, fire,
   stress(n = 1000) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2, s = 0.2 + Math.random() * 0.4;
-      spawnBullet(Math.random() * W, Math.random() * H * 0.7, Math.cos(a) * s, Math.sin(a) * s, i & 1);
-    }
+    for (let i = 0; i < n; i++) fire(Math.random() * W, Math.random() * H * 0.7, Math.random() * TAU, { k: i % BKINDS.length, s: 0.2 + Math.random() * 0.4 });
     return bullets.n;
   },
+  // 検証用: 画面の描画を待たずに n tick 進める
+  step(n = 60) { for (let i = 0; i < n; i++) tick(); return { state: G.state, time: G.time, bullets: bullets.n }; },
 };
 
 syncMenu();
